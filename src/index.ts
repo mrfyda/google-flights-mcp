@@ -127,22 +127,47 @@ const startHttp = async (): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
   };
 
-  app.use("/mcp", requireAuth);
+  // Optional URL-path secret for public deployments. When GF_MCP_PATH_SECRET is
+  // set, MCP is served at /mcp/<secret> and /mcp returns 404. This protects the
+  // endpoint for clients such as Claude web custom connectors, which cannot send
+  // a custom Authorization header on all plans. Use a URL-safe value (hex).
+  const pathSecret = process.env["GF_MCP_PATH_SECRET"];
+  const mcpPath = pathSecret ? `/mcp/${pathSecret}` : "/mcp";
 
-  app.post("/mcp", async (req, res) => {
+  app.use(mcpPath, requireAuth);
+
+  app.post(mcpPath, async (req, res) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
-    if (sessionId && sessions.has(sessionId)) {
+    // Existing session: hand the request to its transport.
+    if (sessionId) {
       const session = sessions.get(sessionId);
-      await session?.transport.handleRequest(req, res, req.body);
+      if (!session) {
+        // Unknown/expired session (e.g. after a restart). Tell the client to
+        // re-initialize instead of silently starting a half-initialized one.
+        res.status(404).json({
+          jsonrpc: "2.0",
+          error: { code: -32001, message: "Session not found" },
+          id: null,
+        });
+        return;
+      }
+      await session.transport.handleRequest(req, res, req.body);
       return;
     }
 
+    // No session id: this must be an initialize request. Create a fresh
+    // server + transport and register the session from the transport's
+    // onsessioninitialized callback -- `transport.sessionId` is only assigned
+    // while handleRequest runs, so it is undefined before then.
     const server = new McpServer({ name: "google-flights", version: "1.0.0" });
     registerTools(server);
 
-    const transport = new StreamableHTTPServerTransport({
+    const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sid) => {
+        sessions.set(sid, { server, transport });
+      },
     });
 
     transport.onclose = () => {
@@ -151,24 +176,20 @@ const startHttp = async (): Promise<void> => {
     };
 
     await server.connect(transport);
-
-    const sid = transport.sessionId;
-    if (sid) sessions.set(sid, { server, transport });
-
     await transport.handleRequest(req, res, req.body);
   });
 
-  app.get("/mcp", async (req, res) => {
+  app.get(mcpPath, async (req, res) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (sessionId && sessions.has(sessionId)) {
       const session = sessions.get(sessionId);
       await session?.transport.handleRequest(req, res);
       return;
     }
-    res.status(400).json({ error: "No session. Send a POST to /mcp first." });
+    res.status(400).json({ error: "No session. Send a POST to initialize first." });
   });
 
-  app.delete("/mcp", async (req, res) => {
+  app.delete(mcpPath, async (req, res) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (sessionId && sessions.has(sessionId)) {
       const session = sessions.get(sessionId);
@@ -187,7 +208,9 @@ const startHttp = async (): Promise<void> => {
   const port = parseInt(process.env["PORT"] ?? "3000", 10);
   app.listen(port, () => {
     console.error(
-      `Google Flights MCP server running on http://0.0.0.0:${port}/mcp (12 tools, auth: ${authToken ? "bearer token required" : "disabled"})`
+      `Google Flights MCP server running on http://0.0.0.0:${port}${mcpPath} ` +
+        `(12 tools, auth: ${authToken ? "bearer token required" : "disabled"}, ` +
+        `path secret: ${pathSecret ? "enabled" : "disabled"})`
     );
   });
 };

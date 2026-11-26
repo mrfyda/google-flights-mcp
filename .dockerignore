@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+dist
+tests
+*.md
+!README.md
+*.log
+.env
+.env.*
+.DS_Store

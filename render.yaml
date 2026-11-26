@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: google-flights-mcp
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # Shared secret embedded in the URL path: /mcp/<GF_MCP_PATH_SECRET>.
+      # Render prompts for this during Blueprint creation. Generate one with:
+      #     openssl rand -hex 16
+      # Leave it empty to serve MCP at /mcp with no secret (anyone with the URL
+      # can use it).
+      - key: GF_MCP_PATH_SECRET
+        sync: false
+      # Optional bearer token (Authorization: Bearer <token>). Claude web only
+      # sends this if your organization has the "Request headers" beta; on other
+      # plans leave it unset and rely on GF_MCP_PATH_SECRET instead.
+      - key: GF_MCP_AUTH_TOKEN
+        sync: false
+      # Price-tracking SQLite location. Ephemeral unless a disk is mounted here.
+      - key: GF_MCP_PRICE_DB_DIR
+        value: /data

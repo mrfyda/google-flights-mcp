@@ -35,6 +35,10 @@ const pickUserAgent = (): string =>
 const BROWSER_HEADERS: Readonly<Record<string, string>> = {
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
+  // Skip Google's EU cookie-consent interstitial. Requests from EEA IPs are
+  // otherwise answered with a 302 to consent.google.com (gl=PT, gl=DE, ...).
+  // The cookie is ignored outside the EEA, so it is safe to always send.
+  "Cookie": "SOCS=CAESHAgBEhJnd3NfMjAyMzA4MTAtMF9SQzIaAmVuIAEaBgiA_LyaBg",
 };
 
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504]);
